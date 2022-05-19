@@ -1,0 +1,153 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=linode-delete
+LINODE_LABEL=""
+LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
+OUTPUT_PATH=""
+QUIET=""
+JQ_EXEC="${JQ_EXEC:-jq}"
+LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
+LINODE_QUERY_EXEC="${LINODE_QUERY_EXEC:-linode-query}"
+
+usage() {
+  cat <<EOF
+Usage: $PROGRAM [OPTIONS] -k TOKEN -l LABEL
+
+Delete linode server.
+
+Required arguments:
+  -k, --token=TOKEN      Linode API token
+  -l, --label=LABEL      Linode label
+
+Optional arguments:
+  -o, --output=PATH      Path to output result as shell variables
+  -q, --quiet            Suppress output
+  -h, --help             This help text
+
+Enviroment variable mappings:
+  LINODE_API_TOKEN       --token
+  CURL_EXEC              Path to curl
+  JQ_EXEC                Path to jq
+  LINODE_API_EXEC        Path to linode-api
+  LINODE_QUERY_EXEC      Path to linode-query
+EOF
+}
+
+_error() {
+  [ $# -gt 0 ] && echo >&2 "$PROGRAM:" "$@"
+  echo >&2 "Try '$PROGRAM --help' for more information."
+  exit 1
+}
+
+_out() {
+  [ -n "$QUIET" ] || echo "$@"
+}
+
+opts="$(
+  getopt -n "$PROGRAM" -o k:l:o:qh \
+    -l token:,label:,output:,quiet,help -- "$@"
+)" || _error
+# shellcheck disable=SC2086
+eval set -- $opts
+
+while [ $# -gt 0 ]; do
+  ARG="$1"
+  shift
+  case "$ARG" in
+  -k | --token)
+    LINODE_API_TOKEN="$1"
+    shift
+    ;;
+  -l | --label)
+    LINODE_LABEL="$1"
+    shift
+    ;;
+  -o | --output)
+    OUTPUT_PATH="$1"
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --) ;;
+  *)
+    _error "unexpected argument '$ARG'"
+    ;;
+  esac
+done
+
+[ -z "${LINODE_API_TOKEN:-}" ] && _error "missing TOKEN"
+[ -z "${LINODE_LABEL:-}" ] && _error "missing LABEL"
+
+which "$JQ_EXEC" >/dev/null || _error "jq not installed"
+which "$LINODE_API_EXEC" >/dev/null || _error "linode-api not installed"
+
+if [ -n "$QUIET" ]; then
+  QUIET_ARG=-q
+else
+  QUIET_ARG=
+fi
+
+tmp="$(mktemp)"
+
+trap 'rm -f -- "$tmp"' EXIT
+
+export LINODE_API_TOKEN
+
+set +e
+# shellcheck disable=SC2086
+"$LINODE_QUERY_EXEC" -l "$LINODE_LABEL" -o "$tmp" $QUIET_ARG
+exitcode=$?
+set -e
+
+if [ $exitcode != 0 ]; then
+  if [ -n "$OUTPUT_PATH" ]; then
+    head -4 "$tmp" >"$OUTPUT_PATH"
+    echo "LINODE_DELETE='no'" >>"$OUTPUT_PATH"
+  fi
+  exit $exitcode
+fi
+
+# shellcheck disable=SC1090
+. "$tmp"
+
+_out
+_out -n "Deleting linode $LINODE_LABEL..."
+
+"$LINODE_API_EXEC" -m DELETE -p "/linode/instances/$LINODE_ID" >"$tmp"
+
+# shellcheck disable=SC2016
+delete_filter='@sh "LINODE_API_STATUS=\(
+  if .errors[0].reason then "error" else "ok" end)
+LINODE_API_ERROR=\(.errors[0].reason // "")
+LINODE_LABEL=\($label_)
+LINODE_ID=\($id)
+LINODE_DELETE=\(if .errors[0].reason then "no" else "yes" end)"'
+
+output="$("$JQ_EXEC" --arg label_ "$LINODE_LABEL" --arg id "$LINODE_ID" \
+  -r "$delete_filter" "$tmp")"
+
+eval "$output"
+
+if [ "$LINODE_API_STATUS" = error ]; then
+  _out error
+  _out "Error: $LINODE_API_ERROR"
+  exitcode=1
+else
+  _out ok
+  _out
+  _out " Label: $LINODE_LABEL"
+  _out "    ID: $LINODE_ID"
+  _out "Delete: yes"
+  exitcode=0
+fi
+
+[ -n "$OUTPUT_PATH" ] && echo "$output" >"$OUTPUT_PATH"
+
+exit $exitcode

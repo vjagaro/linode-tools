@@ -1,0 +1,145 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=linode-query
+LINODE_LABEL=""
+LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
+OUTPUT_PATH=""
+QUIET=""
+JQ_EXEC="${JQ_EXEC:-jq}"
+LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
+
+usage() {
+  cat <<EOF
+Usage: $PROGRAM [OPTIONS] -k TOKEN -l LABEL
+
+Query linode server.
+
+Required arguments:
+  -k, --token=TOKEN    Linode API token
+  -l, --label=LABEL    Linode label
+
+Optional arguments:
+  -o, --output=PATH    Path to output result as shell variables
+  -q, --quiet          Suppress output
+  -h, --help           This help text
+
+Enviroment variable mappings:
+  LINODE_API_TOKEN     --token
+  CURL_EXEC            Path to curl
+  JQ_EXEC              Path to jq
+  LINODE_API_EXEC      Path to linode-api
+EOF
+}
+
+_error() {
+  [ $# -gt 0 ] && echo >&2 "$PROGRAM:" "$@"
+  echo >&2 "Try '$PROGRAM --help' for more information."
+  exit 1
+}
+
+_out() {
+  [ -n "$QUIET" ] || echo "$@"
+}
+
+opts="$(
+  getopt -n "$PROGRAM" -o k:l:o:qh \
+    -l token:,label:,output:,quiet,help -- "$@"
+)" || _error
+# shellcheck disable=SC2086
+eval set -- $opts
+
+while [ $# -gt 0 ]; do
+  ARG="$1"
+  shift
+  case "$ARG" in
+  -l | --label)
+    LINODE_LABEL="$1"
+    shift
+    ;;
+  -k | --token)
+    LINODE_API_TOKEN="$1"
+    shift
+    ;;
+  -o | --output)
+    OUTPUT_PATH="$1"
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --) ;;
+  *)
+    _error "unexpected argument '$ARG'"
+    ;;
+  esac
+done
+
+[ -z "${LINODE_API_TOKEN:-}" ] && _error "missing TOKEN"
+[ -z "${LINODE_LABEL:-}" ] && _error "missing LABEL"
+
+export LINODE_API_TOKEN
+
+which "$JQ_EXEC" >/dev/null || _error "jq not installed"
+which "$LINODE_API_EXEC" >/dev/null || _error "linode-api not installed"
+
+tmp="$(mktemp)"
+
+trap 'rm -f -- "$tmp"' EXIT
+
+_out -n "Querying linode $LINODE_LABEL..."
+
+# shellcheck disable=SC2016
+linode_filter="$("$JQ_EXEC" -cn --arg _ "$LINODE_LABEL" '{ "label": $_ }')"
+
+"$LINODE_API_EXEC" -p /linode/instances -f "$linode_filter" >"$tmp"
+
+# shellcheck disable=SC2016
+query_filter='@sh "LINODE_API_STATUS=\(
+  if .errors[0].reason then "error" else "ok" end)
+LINODE_API_ERROR=\(.errors[0].reason // "")
+LINODE_LABEL=\(.data[0].label // $label_)
+LINODE_ID=\(.data[0].id // "")
+LINODE_STATUS=\(.data[0].status // "")
+LINODE_IPV4=\(.data[0].ipv4[0] // "")
+LINODE_IPV6=\(.data[0].ipv6 // "" | sub("/.+$"; ""))
+LINODE_IMAGE=\(.data[0].image // "")
+LINODE_REGION=\(.data[0].region // "")
+LINODE_TYPE=\(.data[0].type // "")"'
+
+output="$("$JQ_EXEC" -r --arg label_ "$LINODE_LABEL" "$query_filter" "$tmp")"
+
+eval "$output"
+
+if [ "$LINODE_API_STATUS" = error ]; then
+  _out error
+  _out "Error: $LINODE_API_ERROR"
+  exitcode=1
+elif [ -z "$LINODE_ID" ]; then
+  _out not found
+  output="$(echo "$output" |
+    sed "s/^LINODE_API_STATUS.*\$/LINODE_API_STATUS='error'/" |
+    sed "s/^LINODE_API_ERROR.*\$/LINODE_API_ERROR='Not found'/")"
+  exitcode=1
+else
+  _out ok
+  _out
+  _out " Label: $LINODE_LABEL"
+  _out "    ID: $LINODE_ID"
+  _out "Status: $LINODE_STATUS"
+  _out "  IPV4: $LINODE_IPV4"
+  _out "  IPV6: $LINODE_IPV6"
+  _out "Region: $LINODE_REGION"
+  _out " Image: $LINODE_IMAGE"
+  _out "  Type: $LINODE_TYPE"
+  exitcode=0
+fi
+
+[ -n "$OUTPUT_PATH" ] && echo "$output" >"$OUTPUT_PATH"
+
+exit $exitcode

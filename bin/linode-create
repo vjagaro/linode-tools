@@ -1,0 +1,239 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=linode-create
+LINODE_LABEL=""
+LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
+LINODE_IMAGE="${LINODE_IMAGE:-linode/debian11}"
+LINODE_REGION="${LINODE_REGION:-us-west}"
+LINODE_TYPE="${LINODE_TYPE:-g6-nanode-1}"
+OUTPUT_PATH=""
+QUIET=""
+JQ_EXEC="${JQ_EXEC:-jq}"
+LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
+LINODE_QUERY_EXEC="${LINODE_QUERY_EXEC:-linode-query}"
+
+usage() {
+  cat <<EOF
+Usage: $PROGRAM [OPTIONS] -k TOKEN -l LABEL
+
+Create linode server.
+
+Required arguments:
+  -k, --token=TOKEN      Linode API token
+  -l, --label=LABEL      Linode label
+
+Optional arguments:
+  -i, --image=IMAGE      Linode image (default: $LINODE_IMAGE)
+  -r, --region=REGION    Linode region (default: $LINODE_REGION)
+  -t, --type=TYPE        Linode type (default: $LINODE_TYPE)
+  -o, --output=PATH      Path to output result as shell variables
+  -q, --quiet            Suppress output
+  -h, --help             This help text
+
+Enviroment variable mappings:
+  LINODE_API_TOKEN       --token
+  LINODE_IMAGE           --image
+  LINODE_REGION          --region
+  LINODE_TYPE            --type
+  CURL_EXEC              Path to curl
+  JQ_EXEC                Path to jq
+  LINODE_API_EXEC        Path to linode-api
+  LINODE_QUERY_EXEC      Path to linode-query
+EOF
+}
+
+_error() {
+  [ $# -gt 0 ] && echo >&2 "$PROGRAM:" "$@"
+  echo >&2 "Try '$PROGRAM --help' for more information."
+  exit 1
+}
+
+_out() {
+  [ -n "$QUIET" ] || echo "$@"
+}
+
+opts="$(
+  getopt -n "$PROGRAM" -o k:l:i:r:t:o:qh \
+    -l token:,label:,image:,region:,type:,output:,quiet,help -- "$@"
+)" || _error
+# shellcheck disable=SC2086
+eval set -- $opts
+
+while [ $# -gt 0 ]; do
+  ARG="$1"
+  shift
+  case "$ARG" in
+  -k | --token)
+    LINODE_API_TOKEN="$1"
+    shift
+    ;;
+  -l | --label)
+    LINODE_LABEL="$1"
+    shift
+    ;;
+  -i | --image)
+    LINODE_IMAGE="$1"
+    shift
+    ;;
+  -r | --region)
+    LINODE_REGION="$1"
+    shift
+    ;;
+  -t | --type)
+    LINODE_TYPE="$1"
+    shift
+    ;;
+  -o | --output)
+    OUTPUT_PATH="$1"
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --) ;;
+  *)
+    _error "unexpected argument '$ARG'"
+    ;;
+  esac
+done
+
+[ -z "${LINODE_API_TOKEN:-}" ] && _error "missing TOKEN"
+[ -z "${LINODE_LABEL:-}" ] && _error "missing LABEL"
+
+which "$JQ_EXEC" >/dev/null || _error "jq not installed"
+which "$LINODE_API_EXEC" >/dev/null || _error "linode-api not installed"
+
+if [ -n "$QUIET" ]; then
+  QUIET_ARG=-q
+else
+  QUIET_ARG=
+fi
+
+tmp="$(mktemp)"
+
+trap 'rm -f -- "$tmp"' EXIT
+
+export LINODE_API_TOKEN
+
+set +e
+# shellcheck disable=SC2086
+"$LINODE_QUERY_EXEC" -l "$LINODE_LABEL" -o "$tmp" $QUIET_ARG
+exitcode=$?
+set -e
+
+if [ $exitcode = 0 ] || ! grep -q "^LINODE_API_ERROR='Not found'$" "$tmp"; then
+  [ $exitcode = 0 ] && _out "Create: no"
+  if [ -n "$OUTPUT_PATH" ]; then
+    cat "$tmp" >"$OUTPUT_PATH"
+    echo "LINODE_CREATE='no'" >>"$OUTPUT_PATH"
+  fi
+  exit $exitcode
+fi
+
+_out -n "Querying SSH keys..."
+
+"$LINODE_API_EXEC" -p /profile/sshkeys >"$tmp"
+
+# shellcheck disable=SC2016
+keys_filter='@sh "LINODE_API_STATUS=\("error")
+LINODE_API_ERROR=\(.errors[0].reason // "")
+LINODE_LABEL=\($label_)
+LINODE_ID=\("")
+LINODE_STATUS=\("")
+LINODE_IPV4=\("")
+LINODE_IPV6=\("")
+LINODE_IMAGE=\("")
+LINODE_REGION=\("")
+LINODE_TYPE=\("")
+LINODE_CREATE=\("no")"'
+
+output="$("$JQ_EXEC" -r --arg label_ "$LINODE_LABEL" "$keys_filter" "$tmp")"
+
+if echo "$output" | grep -q "LINODE_API_ERROR=''"; then
+  _out ok
+else
+  _out error
+  [ -n "$OUTPUT_PATH" ] && echo "$output" >"$OUTPUT_PATH"
+  exit 1
+fi
+
+_out -n "Creating linode $LINODE_LABEL..."
+
+authorized_keys_json="$(jq -c '[ .data // [] | .[].ssh_key ]' "$tmp")"
+
+root_pass="$(tr -cd '[:graph:]' </dev/urandom | head -c 20)"
+
+# shellcheck disable=SC2016
+body="$(
+  "$JQ_EXEC" -cn \
+    --argjson authorized_keys "$authorized_keys_json" \
+    --arg label_ "$LINODE_LABEL" \
+    --arg image "$LINODE_IMAGE" \
+    --arg region "$LINODE_REGION" \
+    --arg root_pass "$root_pass" \
+    --arg "type" "$LINODE_TYPE" \
+    '{
+      "authorized_keys": $authorized_keys,
+      "label": $label_,
+      "image": $image,
+      "region": $region,
+      "root_pass": $root_pass,
+      "type": $type
+    }'
+)"
+
+"$LINODE_API_EXEC" -m POST -p /linode/instances -b "$body" >"$tmp"
+
+# shellcheck disable=SC2016
+create_filter='@sh "LINODE_API_STATUS=\(
+  if .errors[0].reason then "error" else "ok" end)
+LINODE_API_ERROR=\(.errors[0].reason // "")
+LINODE_LABEL=\(.label // $label_)
+LINODE_ID=\(.id // "")
+LINODE_STATUS=\(.status // "")
+LINODE_IPV4=\(.ipv4[0] // "")
+LINODE_IPV6=\(.ipv6 // "" | sub("/.+$"; ""))
+LINODE_IMAGE=\(.image // "")
+LINODE_REGION=\(.region // "")
+LINODE_TYPE=\(.type // "")
+LINODE_CREATE=\(if .id then "yes" else "no" end)"'
+
+output="$("$JQ_EXEC" --arg label_ "$LINODE_LABEL" -r "$create_filter" "$tmp")"
+
+eval "$output"
+
+if [ "$LINODE_API_STATUS" = error ]; then
+  _out error
+  _out "Error: $LINODE_API_ERROR"
+  exitcode=1
+elif [ -z "$LINODE_ID" ]; then
+  _out error
+  _out "Error: No Linode ID"
+  output="$(echo "$output" |
+    sed "s/^LINODE_API_STATUS.*\$/LINODE_API_STATUS='error'/" |
+    sed "s/^LINODE_API_ERROR.*\$/LINODE_API_ERROR='No Linode ID'/")"
+  exitcode=1
+else
+  _out ok
+  _out
+  _out " Label: $LINODE_LABEL"
+  _out "    ID: $LINODE_ID"
+  _out "Status: $LINODE_STATUS"
+  _out "  IPV4: $LINODE_IPV4"
+  _out "  IPV6: $LINODE_IPV6"
+  _out "Region: $LINODE_REGION"
+  _out " Image: $LINODE_IMAGE"
+  _out "  Type: $LINODE_TYPE"
+  _out "Create: yes"
+  exitcode=0
+fi
+
+[ -n "$OUTPUT_PATH" ] && echo "$output" >"$OUTPUT_PATH"
+
+exit $exitcode
