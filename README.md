@@ -45,6 +45,13 @@ $ linode-list
 Label  | ID       | IPv4            | IPv6                           | Region  | Status
 purple | 36406452 | 74.207.246.120  | 2600:3c01::f03c:93ff:fe1f:a1c9 | us-west | running
 
+$ linode-dns -d colors.com -n purple -4 74.207.246.120 -6 2600:3c01::f03c:93ff:fe1f:a1c9
+Querying domain colors.com...ok
+Querying domain records...ok
+
+purple.colors.com: 74.207.246.120 (A) creating...ok
+purple.colors.com: 2600:3c01::f03c:93ff:fe1f:a1c9 (AAAA) creating...ok
+
 $ linode-delete -l purple
 Querying linode purple...ok
 
@@ -62,6 +69,14 @@ Deleting linode purple...ok
  Label: purple
     ID: 36406452
 Delete: yes
+
+$ linode-dns -d colors.com -n purple -4 . -6 .
+Querying domain colors.com...ok
+Querying domain records...ok
+
+Status: provisioning
+purple.colors.com: 74.207.246.120 (A) deleting...ok
+purple.colors.com: 2600:3c01::f03c:93ff:fe1f:a1c9 (AAAA) deleting...ok
 ```
 
 ## Install

@@ -3,13 +3,13 @@
 set -eu
 
 PROGRAM=linode-create
-LINODE_LABEL=""
+LINODE_LABEL=
 LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
 LINODE_IMAGE="${LINODE_IMAGE:-linode/debian11}"
 LINODE_REGION="${LINODE_REGION:-us-west}"
 LINODE_TYPE="${LINODE_TYPE:-g6-nanode-1}"
-OUTPUT_PATH=""
-QUIET=""
+OUTPUT_PATH=
+QUIET=
 JQ_EXEC="${JQ_EXEC:-jq}"
 LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
 LINODE_QUERY_EXEC="${LINODE_QUERY_EXEC:-linode-query}"
@@ -163,7 +163,7 @@ else
   exit 1
 fi
 
-_out -n "Creating linode $LINODE_LABEL..."
+_out -n "Creating instance $LINODE_LABEL..."
 
 authorized_keys_json="$(jq -c '[ .data // [] | .[].ssh_key ]' "$tmp")"
 

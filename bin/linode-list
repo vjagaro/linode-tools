@@ -72,7 +72,7 @@ tmp="$(mktemp)"
 
 trap 'rm -f -- "$tmp"' EXIT
 
-linode_filter='{"+order_by": "label","+order": "asc"}'
+linode_filter='{"+order": "asc", "+order_by": "label"}'
 
 "$LINODE_API_EXEC" -p /linode/instances -f "$linode_filter" >"$tmp"
 

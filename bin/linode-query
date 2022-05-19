@@ -3,10 +3,10 @@
 set -eu
 
 PROGRAM=linode-query
-LINODE_LABEL=""
+LINODE_LABEL=
 LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
-OUTPUT_PATH=""
-QUIET=""
+OUTPUT_PATH=
+QUIET=
 JQ_EXEC="${JQ_EXEC:-jq}"
 LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
 
@@ -92,7 +92,7 @@ tmp="$(mktemp)"
 
 trap 'rm -f -- "$tmp"' EXIT
 
-_out -n "Querying linode $LINODE_LABEL..."
+_out -n "Querying instance $LINODE_LABEL..."
 
 # shellcheck disable=SC2016
 linode_filter="$("$JQ_EXEC" -cn --arg _ "$LINODE_LABEL" '{ "label": $_ }')"

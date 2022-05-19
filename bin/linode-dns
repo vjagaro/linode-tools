@@ -1,0 +1,280 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=linode-dns
+LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
+LINODE_DOMAIN=
+LINODE_RECORD_NAME=
+LINODE_RECORD_IPV4=
+LINODE_RECORD_IPV6=
+LINODE_RECORD_TTL=
+QUIET=
+JQ_EXEC="${JQ_EXEC:-jq}"
+LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
+
+usage() {
+  cat <<EOF
+Usage: $PROGRAM [OPTIONS] -k TOKEN -d DOMAIN [ -n NAME ] [ -4 IPv4 ] [ -6 IPV6 ]
+
+Set IPv4/6 records on Linode domains.
+
+If -4 and -6 are not specified, then this does not modify anything.
+
+If a single dot '.' is passed to -4 / -6, then the respective records are
+deleted.
+
+Required arguments:
+  -k, --token=TOKEN      Linode API token
+  -d, --domain=DOMAIN    Linode domain
+  -n, --name=NAME        Record name
+  -4, --ipv4=IPV4        Record target IPv4 address
+  -6, --ipv6=IPV6        Record target IPv6 address
+
+Optional arguments:
+  -t, --ttl=TTL          Time-to-live (TTL) in seconds
+  -q, --quiet            Suppress output
+  -h, --help             This help text
+
+Enviroment variable mappings:
+  LINODE_API_TOKEN     --token
+  CURL_EXEC            Path to curl
+  JQ_EXEC              Path to jq
+  LINODE_API_EXEC      Path to linode-api
+
+LIMITATION: this does not work with domains with +100 records (TODO).
+EOF
+}
+
+_error() {
+  [ $# -gt 0 ] && echo >&2 "$PROGRAM:" "$@"
+  echo >&2 "Try '$PROGRAM --help' for more information."
+  exit 1
+}
+
+_out() {
+  [ -n "$QUIET" ] || echo "$@"
+}
+
+opts="$(
+  getopt -n "$PROGRAM" -o k:d:n:4:6:t:h \
+    -l token:,domain:,name:,ipv4:,ipv6:,ttl:,help -- "$@"
+)" || _error
+# shellcheck disable=SC2086
+eval set -- $opts
+
+while [ $# -gt 0 ]; do
+  ARG="$1"
+  shift
+  case "$ARG" in
+  -k | --token)
+    LINODE_API_TOKEN="$1"
+    shift
+    ;;
+  -d | --domain)
+    LINODE_DOMAIN="$1"
+    shift
+    ;;
+  -n | --name)
+    LINODE_RECORD_NAME="$1"
+    shift
+    ;;
+  -4 | --ipv4)
+    LINODE_RECORD_IPV4="$1"
+    shift
+    ;;
+  -6 | --ipv6)
+    LINODE_RECORD_IPV6="$1"
+    shift
+    ;;
+  -t | --ttl)
+    LINODE_RECORD_TTL="$1"
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    exit 0
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --) ;;
+  *)
+    _error "unexpected argument '$ARG'"
+    ;;
+  esac
+done
+
+[ -z "$LINODE_API_TOKEN" ] && _error "missing TOKEN"
+[ -z "$LINODE_DOMAIN" ] && _error "missing DOMAIN"
+
+export LINODE_API_TOKEN
+if [ -n "$LINODE_RECORD_NAME" ]; then
+  LINODE_RECORD_FQDN="$LINODE_RECORD_NAME.$LINODE_DOMAIN"
+else
+  LINODE_RECORD_FQDN="$LINODE_DOMAIN"
+fi
+
+which "$JQ_EXEC" >/dev/null || _error "jq not installed"
+which "$LINODE_API_EXEC" >/dev/null || _error "linode-api not installed"
+
+tmp="$(mktemp)"
+
+trap 'rm -f -- "$tmp"' EXIT
+
+_out -n "Querying domain $LINODE_DOMAIN..."
+
+# shellcheck disable=SC2016
+domain_filter="$("$JQ_EXEC" -cn --arg domain "$LINODE_DOMAIN" \
+  '{ "domain": $domain }')"
+
+"$LINODE_API_EXEC" -p /domains -f "$domain_filter" >"$tmp"
+
+LINODE_DOMAIN_ID="$(jq -r '.data[0].id // ""' "$tmp")"
+LINODE_API_ERROR="$(jq -r '.errors[0].reason // ""' "$tmp")"
+
+if [ -n "$LINODE_DOMAIN_ID" ]; then
+  _out ok
+else
+  _out error
+  _out "Error: ${LINODE_API_ERROR:-Unknown}"
+  exit 1
+fi
+
+_out -n "Querying domain records..."
+
+# shellcheck disable=SC2016
+records_filter="$("$JQ_EXEC" -cn --arg name "$LINODE_RECORD_NAME" '{
+  "+and": [
+    { "name": $name },
+    {
+      "+or": [
+        { "type": "A" },
+        { "type": "AAAA" }
+      ]
+    }
+  ],
+  "+order": "asc",
+  "+order_by": "name"
+}')"
+
+"$LINODE_API_EXEC" -p "/domains/$LINODE_DOMAIN_ID/records" \
+  -f "$records_filter" >"$tmp"
+
+LINODE_API_ERROR="$(jq -r '.errors[0].reason // ""' "$tmp")"
+
+if [ -z "$LINODE_API_ERROR" ]; then
+  _out ok
+else
+  _out error
+  _out "Error: $LINODE_API_ERROR"
+  exit 1
+fi
+
+_out
+
+if [ -n "$LINODE_RECORD_TTL" ]; then
+  # shellcheck disable=SC2016
+  LINODE_RECORD_TTL_JS=', "ttl_sec": $ttl | tonumber'
+else
+  LINODE_RECORD_TTL_JS=
+fi
+
+"$JQ_EXEC" -c '.data[]' "$tmp" | {
+
+  while read -r record_json; do
+
+    id="$(echo "$record_json" | jq -r .id)"
+    target="$(echo "$record_json" | jq -r .target)"
+    type="$(echo "$record_json" | jq -r .type)"
+
+    if [ "$type" = A ]; then
+      new_target="$LINODE_RECORD_IPV4"
+    else # AAAA
+      new_target="$LINODE_RECORD_IPV6"
+    fi
+
+    _out -n "$LINODE_RECORD_FQDN: $target ($type) "
+
+    if [ -n "$new_target" ] && [ "$target" != "$new_target" ]; then
+
+      if [ "$new_target" = . ]; then
+
+        _out -n "deleting..."
+        "$LINODE_API_EXEC" -m DELETE \
+          -p "/domains/$LINODE_DOMAIN_ID/records/$id" >/dev/null
+        _out "ok"
+        # TODO check for errors
+
+      else
+
+        body="$(
+          "$JQ_EXEC" -cn \
+            --arg target "$new_target" \
+            --arg ttl "$LINODE_RECORD_TTL" \
+            "{
+              \"target\": \$target
+              $LINODE_RECORD_TTL_JS
+            }"
+        )"
+
+        _out -n "-> $new_target updating..."
+        "$LINODE_API_EXEC" -m PUT -b "$body" \
+          -p "/domains/$LINODE_DOMAIN_ID/records/$id" >/dev/null
+        _out "ok"
+        # TODO check for errors
+
+        if [ "$type" = A ]; then
+          LINODE_RECORD_IPV4=.
+        else
+          LINODE_RECORD_IPV6=.
+        fi
+
+      fi
+
+    else
+
+      _out
+
+      if [ "$type" = A ]; then
+        LINODE_RECORD_IPV4=.
+      else
+        LINODE_RECORD_IPV6=.
+      fi
+
+    fi
+  done
+
+  for type in A AAAA; do
+    if [ $type = A ]; then
+      target="$LINODE_RECORD_IPV4"
+    else
+      target="$LINODE_RECORD_IPV6"
+    fi
+    if [ -n "$target" ] && [ $target != . ]; then
+
+      # shellcheck disable=SC2016
+      body="$(
+        "$JQ_EXEC" -cn \
+          --arg type "$type" \
+          --arg name "$LINODE_RECORD_NAME" \
+          --arg target "$target" \
+          --arg ttl "$LINODE_RECORD_TTL" "{
+            \"type\": \$type,
+            \"name\": \$name,
+            \"target\": \$target
+            $LINODE_RECORD_TTL_JS
+          }"
+      )"
+
+      _out -n "$LINODE_RECORD_FQDN: $target ($type) creating..."
+      "$LINODE_API_EXEC" -m POST -b "$body" \
+        -p "/domains/$LINODE_DOMAIN_ID/records" >/dev/null
+      _out "ok"
+      # TODO check for errors
+    fi
+  done
+}
+
+exit 0

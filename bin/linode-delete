@@ -3,10 +3,10 @@
 set -eu
 
 PROGRAM=linode-delete
-LINODE_LABEL=""
+LINODE_LABEL=
 LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
-OUTPUT_PATH=""
-QUIET=""
+OUTPUT_PATH=
+QUIET=
 JQ_EXEC="${JQ_EXEC:-jq}"
 LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
 LINODE_QUERY_EXEC="${LINODE_QUERY_EXEC:-linode-query}"
@@ -118,7 +118,7 @@ fi
 . "$tmp"
 
 _out
-_out -n "Deleting linode $LINODE_LABEL..."
+_out -n "Deleting instance $LINODE_LABEL..."
 
 "$LINODE_API_EXEC" -m DELETE -p "/linode/instances/$LINODE_ID" >"$tmp"
 
