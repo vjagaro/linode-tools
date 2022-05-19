@@ -11,7 +11,7 @@ usage() {
   cat <<EOF
 Usage: $PROGRAM [OPTIONS] -k TOKEN
 
-Query linode server.
+Query linode instance.
 
 Required arguments:
   -k, --token=TOKEN    Linode API token

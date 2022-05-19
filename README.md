@@ -8,7 +8,7 @@ An opinionated set of shell scripts to help manage Linode instances.
 $ export LINODE_API_TOKEN=3f...b1
 
 $ linode-list
-Label | ID | IPv4 | IPv6 | Region  | Status
+Label | ID | IPv4 | IPv6 | Region | Status
 
 $ linode-query -l purple
 Querying linode purple...not found

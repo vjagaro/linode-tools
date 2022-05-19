@@ -18,7 +18,7 @@ usage() {
   cat <<EOF
 Usage: $PROGRAM [OPTIONS] -k TOKEN -l LABEL
 
-Create linode server.
+Create linode instance.
 
 Required arguments:
   -k, --token=TOKEN      Linode API token
