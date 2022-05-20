@@ -49,21 +49,29 @@ Examples:
 EOF
 }
 
-_error() {
+curl() {
+  command "$CURL_EXEC" "$@"
+}
+
+error() {
   [ $# -gt 0 ] && echo >&2 "$PROGRAM:" "$@"
   echo >&2 "Try '$PROGRAM --help' for more information."
   exit 1
 }
 
-_make_error() {
+jq() {
+  command "$JQ_EXEC" "$@"
+}
+
+make_error() {
   # shellcheck disable=SC2016
-  "$JQ_EXEC" -cn --arg _ "$*" '{"errors":[{"reason":$_}]}'
+  jq -cn --arg reason "$*" '{ "errors": [ { "reason": $reason } ] }'
 }
 
 opts="$(
   getopt -n "$PROGRAM" -o k:p:b:f:m:h \
     -l token:,path:,body:,filter:,method:,prefix:,help -- "$@"
-)" || _error
+)" || error
 # shellcheck disable=SC2086
 eval set -- $opts
 
@@ -100,16 +108,16 @@ while [ $# -gt 0 ]; do
     ;;
   --) ;;
   *)
-    _error "unexpected argument '$ARG'"
+    error "unexpected argument '$ARG'"
     ;;
   esac
 done
 
-[ -z "$LINODE_API_TOKEN" ] && _error "missing TOKEN"
-[ -z "$LINODE_API_PATH" ] && _error "missing PATH"
+[ -z "$LINODE_API_TOKEN" ] && error "missing TOKEN"
+[ -z "$LINODE_API_PATH" ] && error "missing PATH"
 
-which "$CURL_EXEC" >/dev/null || _error "curl not installed"
-which jq >/dev/null || _error "jq not installed"
+which "$CURL_EXEC" >/dev/null || error "curl not found"
+which "$JQ_EXEC" >/dev/null || error "jq not found"
 
 tmp_output="$(mktemp)"
 tmp_stderr="$(mktemp)"
@@ -123,23 +131,24 @@ set -- "-sS" "-o" "$tmp_output" \
 [ -n "$LINODE_API_BODY" ] && set -- "$@" -d "$LINODE_API_BODY"
 [ -n "$LINODE_API_FILTER" ] && set -- "$@" -H "X-Filter: $LINODE_API_FILTER"
 [ -n "$LINODE_API_METHOD" ] && set -- "$@" -X "$LINODE_API_METHOD"
+set -- "$@" "${LINODE_API_PREFIX}${LINODE_API_PATH}"
 
 set +e
-"$CURL_EXEC" "$@" "${LINODE_API_PREFIX}${LINODE_API_PATH}" 2>"$tmp_stderr"
+curl "$@" 2>"$tmp_stderr"
 result=$?
 set -e
 
 if [ $result != 0 ]; then
   if [ -s "$tmp_stderr" ]; then
-    _make_error "$(cat "$tmp_stderr")"
+    make_error "$(cat "$tmp_stderr")"
   else
-    _make_error "Unknown error"
+    make_error "Unknown error"
   fi
 else
   if [ -s "$tmp_output" ]; then
     cat "$tmp_output"
   else
-    _make_error "No data"
+    make_error "No data"
   fi
 fi
 
