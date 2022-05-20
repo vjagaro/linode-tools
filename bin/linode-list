@@ -9,14 +9,12 @@ LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
 
 usage() {
   cat <<EOF
-Usage: $PROGRAM [OPTIONS] -k TOKEN
+Usage: $PROGRAM [OPTIONS]
 
 Query linode instance.
 
-Required arguments:
-  -k, --token=TOKEN    Linode API token
-
 Optional arguments:
+  -k, --token=TOKEN    Linode API token
   -h, --help           This help text
 
 Enviroment variable mappings:
@@ -78,7 +76,7 @@ export LINODE_API_TOKEN
 
 linode_filter='{"+order": "asc", "+order_by": "label"}'
 
-output="$(linode_api -p /linode/instances -f "$linode_filter")"
+output="$(linode_api -f "$linode_filter" /linode/instances)"
 
 linode_api_error="$(echo "$output" | jq -r '.errors[0].reason // ""')"
 

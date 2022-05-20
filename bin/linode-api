@@ -14,7 +14,7 @@ JQ_EXEC="${JQ_EXEC:-jq}"
 
 usage() {
   cat <<EOF
-Usage: $PROGRAM [OPTIONS] -k TOKEN -p PATH
+Usage: $PROGRAM [OPTIONS] PATH
 
 Query Linode API and output JSON, even under error conditions.
 
@@ -24,14 +24,14 @@ invalid arguments.
 See https://www.linode.com/docs/api for more information.
 
 Required arguments:
-  -k, --token=TOKEN      Personal access token
-  -p, --path=PATH        Appended to prefix to form URL
+  PATH                   Appended to prefix to form URL
 
 Optional arguments:
+  -k, --token=TOKEN      API token
   -b, --body=BODY        JSON Body (default none)
   -f, --filter=FILTER    JSON Filter (default none)
   -m, --method=METHOD    HTTP method (default $LINODE_API_METHOD)
-      --prefix=PREFIX    URL prefix (default $LINODE_API_PREFIX)
+  -p, --prefix=PREFIX    URL prefix (default $LINODE_API_PREFIX)
   -h, --help             This help text
 
 Enviroment variable mappings:
@@ -41,11 +41,16 @@ Enviroment variable mappings:
   JQ_EXEC                Path to jq
 
 Examples:
-  \$ $PROGRAM -k badtoken -p /profile
-  {"errors": [{"reason": "Invalid Token"}]}
-
-  \$ $PROGRAM -k c96...9d9 -p /profile
+  \$ export LINODE_API_TOKEN=...
+  \$ $PROGRAM /profile
   {"uid": 1234, ...}
+
+  \$ body='{"label": "abc", "type": "g6-nanode-1", "region": "us-west"}'
+  \$ $PROGRAM -m POST -b "\$body" /linode/instances
+  {"id": 36429850, "label": "abc", ...}
+
+  \$ $PROGRAM /unknown/path
+  {"errors": [{"reason": "Not found"}]}
 EOF
 }
 
@@ -69,8 +74,8 @@ make_error() {
 }
 
 opts="$(
-  getopt -n "$PROGRAM" -o k:p:b:f:m:h \
-    -l token:,path:,body:,filter:,method:,prefix:,help -- "$@"
+  getopt -n "$PROGRAM" -o k:b:f:m:p:h \
+    -l token:,body:,filter:,method:,prefix:,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -81,10 +86,6 @@ while [ $# -gt 0 ]; do
   case "$ARG" in
   -k | --token)
     LINODE_API_TOKEN="$1"
-    shift
-    ;;
-  -p | --path)
-    LINODE_API_PATH="$1"
     shift
     ;;
   -b | --body)
@@ -99,22 +100,33 @@ while [ $# -gt 0 ]; do
     LINODE_API_METHOD="$1"
     shift
     ;;
-  --prefix)
-    LINODE_API_PREFIX=1
+  -p | --prefix)
+    LINODE_API_PREFIX="$1"
+    shift
     ;;
   -h | --help)
     usage
     exit 0
     ;;
-  --) ;;
+  --)
+    while [ $# -gt 0 ]; do
+      ARG="$1"
+      if [ -z "$LINODE_API_PATH" ]; then
+        LINODE_API_PATH="$ARG"
+      else
+        error "unexpected argument '$ARG'"
+      fi
+      shift
+    done
+    ;;
   *)
-    error "unexpected argument '$ARG'"
+    error "unexpected option '$ARG'"
     ;;
   esac
 done
 
-[ -z "$LINODE_API_TOKEN" ] && error "missing TOKEN"
 [ -z "$LINODE_API_PATH" ] && error "missing PATH"
+[ -z "$LINODE_API_TOKEN" ] && error "missing TOKEN"
 
 which "$CURL_EXEC" >/dev/null || error "curl not found"
 which "$JQ_EXEC" >/dev/null || error "jq not found"

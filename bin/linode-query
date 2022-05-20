@@ -12,15 +12,15 @@ LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
 
 usage() {
   cat <<EOF
-Usage: $PROGRAM [OPTIONS] -k TOKEN -l LABEL
+Usage: $PROGRAM [OPTIONS] LABEL
 
 Query linode instance.
 
 Required arguments:
-  -k, --token=TOKEN    Linode API token
-  -l, --label=LABEL    Linode label
+  LABEL                Instance label
 
 Optional arguments:
+  -k, --token=TOKEN    API token
   -o, --output=PATH    Path to output result as shell variables
   -q, --quiet          Suppress output
   -h, --help           This help text
@@ -52,8 +52,8 @@ out() {
 }
 
 opts="$(
-  getopt -n "$PROGRAM" -o k:l:o:qh \
-    -l token:,label:,output:,quiet,help -- "$@"
+  getopt -n "$PROGRAM" -o k:o:qh \
+    -l token:,output:,quiet,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -62,10 +62,6 @@ while [ $# -gt 0 ]; do
   ARG="$1"
   shift
   case "$ARG" in
-  -l | --label)
-    LINODE_LABEL="$1"
-    shift
-    ;;
   -k | --token)
     LINODE_API_TOKEN="$1"
     shift
@@ -81,18 +77,33 @@ while [ $# -gt 0 ]; do
     usage
     exit 0
     ;;
-  --) ;;
+  --)
+    while [ $# -gt 0 ]; do
+      ARG="$1"
+      if [ -z "$LINODE_LABEL" ]; then
+        LINODE_LABEL="$ARG"
+      else
+        error "unexpected argument '$ARG'"
+      fi
+      shift
+    done
+    ;;
   *)
-    error "unexpected argument '$ARG'"
+    error "unexpected option '$ARG'"
     ;;
   esac
 done
 
-[ -z "${LINODE_API_TOKEN:-}" ] && error "missing TOKEN"
 [ -z "${LINODE_LABEL:-}" ] && error "missing LABEL"
+[ -z "${LINODE_API_TOKEN:-}" ] && error "missing TOKEN"
 
-which "$JQ_EXEC" >/dev/null || error "jq not installed"
-which "$LINODE_API_EXEC" >/dev/null || error "linode-api not installed"
+which "$JQ_EXEC" >/dev/null || error "jq not found"
+which "$LINODE_API_EXEC" >/dev/null || error "linode-api not found"
+
+if [ "$OUTPUT_PATH" = - ]; then
+  OUTPUT_PATH=/dev/stdout
+  QUIET=1
+fi
 
 export LINODE_API_TOKEN
 
@@ -100,7 +111,7 @@ out -n "Querying instance $LINODE_LABEL..."
 
 linode_filter="$(jq -cn --arg label_ "$LINODE_LABEL" '{ "label": $label_ }')"
 
-json="$(linode_api -f "$linode_filter" -p /linode/instances)"
+json="$(linode_api -f "$linode_filter" /linode/instances)"
 
 # shellcheck disable=SC2016
 query_filter='@sh "LINODE_API_STATUS=\(

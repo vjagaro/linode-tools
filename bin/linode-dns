@@ -15,26 +15,22 @@ LINODE_API_EXEC="${LINODE_API_EXEC:-linode-api}"
 
 usage() {
   cat <<EOF
-Usage: $PROGRAM [OPTIONS] -k TOKEN -d DOMAIN [ -n NAME ] [ -4 IPV4 ] [ -6 IPV6 ]
+Usage: $PROGRAM [OPTIONS] -d DOMAIN -n NAME [ -4 IPV4 ] [ -6 IPV6 ]
 
-Set A (IPv4), AAAA (IPv6) Linode domain records.
+Get / set / delete IPv4 (A) and IPv6 (AAAA) Linode domain records.
 
-If -n is not specified or blank, then this will show/modify the root records.
-
-If both -4 and -6 are not specified or blank, then this will just show the
-current records.
-
-If a single dot '.' is the argument for -4 / -6, then the respective records
-are deleted.
+If IPV4 / IPV6 is not specified or blank, then that record is shown.
+If IPV4 / IPV6 is a single dot '.', then that record is deleted.
+If NAME is not specified or blank, then the root records will be shown/updated.
 
 Required arguments:
-  -k, --token=TOKEN      Linode API token
-  -d, --domain=DOMAIN    Linode domain
-  -n, --name=NAME        Linode domain record name
-  -4, --ipv4=IPV4        Set target IPv4 address
-  -6, --ipv6=IPV6        Set target IPv6 address
+  -d, --domain=DOMAIN    Domain name
+  -n, --name=NAME        Domain record name
 
 Optional arguments:
+  -k, --token=TOKEN      API token
+  -4, --ipv4=IPV4        Target IPv4 address
+  -6, --ipv6=IPV6        Target IPv6 address
   -t, --ttl=TTL          Time-to-live (TTL) in seconds
   -q, --quiet            Suppress output
   -h, --help             This help text
@@ -45,7 +41,7 @@ Enviroment variable mappings:
   JQ_EXEC                Path to jq
   LINODE_API_EXEC        Path to linode-api
 
-LIMITATION: This only works with A and AAAA records with a single target.
+LIMITATION: Only one IPv4 (A) / IPv6 (AAAA) record can be specified per NAME.
 EOF
 }
 
@@ -67,13 +63,13 @@ linode_api_with_check() {
   out -n "$1..."
   shift
   LINODE_API_OUTPUT="$(linode_api "$@")"
-  LINODE_API_ERROR="$(echo "$LINODE_API_OUTPUT" |
+  api_error="$(echo "$LINODE_API_OUTPUT" |
     jq -r '.errors[0].reason // ""')"
-  if [ -z "$LINODE_API_ERROR" ]; then
+  if [ -z "$api_error" ]; then
     out ok
   else
     out error
-    out "Error: $LINODE_API_ERROR"
+    out "Error: $api_error"
     exit 1
   fi
 }
@@ -149,10 +145,27 @@ export LINODE_API_TOKEN
 domain_filter="$(jq -cn --arg domain "$LINODE_DOMAIN" \
   "{ \"domain\": \$domain }")"
 
-linode_api_with_check "Querying domain $LINODE_DOMAIN" \
-  -f "$domain_filter" -p /domains
+out -n "Querying domain $LINODE_DOMAIN..."
 
-LINODE_DOMAIN_ID="$(echo "$LINODE_API_OUTPUT" | jq -r '.data[0].id // ""')"
+LINODE_API_OUTPUT="$(linode_api -f "$domain_filter" /domains)"
+
+eval "$(echo "$LINODE_API_OUTPUT" | jq -r '@sh "
+  api_error=\(.errors[0].reason // "")
+  LINODE_DOMAIN_ID=\(.data[0].id // "")
+"')"
+
+if [ -z "$api_error" ]; then
+  if [ -n "$LINODE_DOMAIN_ID" ]; then
+    out ok
+  else
+    out not found
+    exit 1
+  fi
+else
+  out error
+  out "Error: $api_error"
+  exit 1
+fi
 
 # shellcheck disable=SC2016
 records_filter="$(jq -cn --arg name "$LINODE_RECORD_NAME" '{
@@ -170,7 +183,7 @@ records_filter="$(jq -cn --arg name "$LINODE_RECORD_NAME" '{
 }')"
 
 linode_api_with_check "Querying domain records" \
-  -f "$records_filter" -p "/domains/$LINODE_DOMAIN_ID/records"
+  -f "$records_filter" "/domains/$LINODE_DOMAIN_ID/records"
 
 out
 
@@ -187,9 +200,12 @@ echo "$LINODE_API_OUTPUT" | jq -c '.data[]' | {
   while read -r record_json; do
 
     count=$((count + 1))
-    id="$(echo "$record_json" | jq -r .id)"
-    target="$(echo "$record_json" | jq -r .target)"
-    type="$(echo "$record_json" | jq -r .type)"
+
+    eval "$(echo "$record_json" | jq -r '@sh "
+      id=\(.id)
+      target=\(.target)
+      type=\(.type)
+    "')"
 
     if [ "$type" = A ]; then
       new_target="$LINODE_RECORD_IPV4"
@@ -201,8 +217,9 @@ echo "$LINODE_API_OUTPUT" | jq -c '.data[]' | {
 
     if [ -n "$new_target" ] && [ "$target" != "$new_target" ]; then
       if [ "$new_target" = . ]; then
+        # shellcheck disable=SC2154
         linode_api_with_check deleting \
-          -m DELETE -p "/domains/$LINODE_DOMAIN_ID/records/$id"
+          -m DELETE "/domains/$LINODE_DOMAIN_ID/records/$id"
       else
         body="$(
           jq -cn \
@@ -214,7 +231,7 @@ echo "$LINODE_API_OUTPUT" | jq -c '.data[]' | {
         )"
         out -n "-> $new_target "
         linode_api_with_check updating \
-          -m PUT -b "$body" -p "/domains/$LINODE_DOMAIN_ID/records/$id"
+          -m PUT -b "$body" "/domains/$LINODE_DOMAIN_ID/records/$id"
         target="$new_target"
       fi
     else
@@ -252,7 +269,7 @@ echo "$LINODE_API_OUTPUT" | jq -c '.data[]' | {
           }"
       )"
       linode_api_with_check creating \
-        -m POST -b "$body" -p "/domains/$LINODE_DOMAIN_ID/records"
+        -m POST -b "$body" "/domains/$LINODE_DOMAIN_ID/records"
     fi
   done
 
