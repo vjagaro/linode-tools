@@ -23,23 +23,21 @@ If IPV4 / IPV6 is not specified or blank, then that record is shown.
 If IPV4 / IPV6 is a single dot '.', then that record is deleted.
 If NAME is not specified or blank, then the root records will be shown/updated.
 
-Required arguments:
-  -d, --domain=DOMAIN    Domain name
-  -n, --name=NAME        Domain record name
+Options:
+  -d, --domain=DOMAIN      Domain name (required)
+  -n, --name=NAME          Domain record name (required)
+  -k, --api-token=TOKEN    API token (required)
+  -4, --ipv4=IPV4          Target IPv4 address
+  -6, --ipv6=IPV6          Target IPv6 address
+  -t, --ttl=TTL            Time-to-live (TTL) in seconds
+  -q, --quiet              Suppress output
+  -h, --help               This help text
 
-Optional arguments:
-  -k, --token=TOKEN      API token
-  -4, --ipv4=IPV4        Target IPv4 address
-  -6, --ipv6=IPV6        Target IPv6 address
-  -t, --ttl=TTL          Time-to-live (TTL) in seconds
-  -q, --quiet            Suppress output
-  -h, --help             This help text
-
-Enviroment variable mappings:
-  LINODE_API_TOKEN       --token
-  CURL_EXEC              Path to curl
-  JQ_EXEC                Path to jq
-  LINODE_API_EXEC        Path to linode-api
+Enviroment variables:
+  LINODE_API_TOKEN         See --token
+  CURL_EXEC                Path to curl
+  JQ_EXEC                  Path to jq
+  LINODE_API_EXEC          Path to linode-api
 
 LIMITATION: Only one IPv4 (A) / IPv6 (AAAA) record can be specified per NAME.
 EOF
@@ -80,7 +78,7 @@ out() {
 
 opts="$(
   getopt -n "$PROGRAM" -o k:d:n:4:6:t:h \
-    -l token:,domain:,name:,ipv4:,ipv6:,ttl:,help -- "$@"
+    -l api-token:,domain:,name:,ipv4:,ipv6:,ttl:,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -89,7 +87,7 @@ while [ $# -gt 0 ]; do
   ARG="$1"
   shift
   case "$ARG" in
-  -k | --token)
+  -k | --api-token)
     LINODE_API_TOKEN="$1"
     shift
     ;;
@@ -121,18 +119,20 @@ while [ $# -gt 0 ]; do
     usage
     exit 0
     ;;
-  --) ;;
+  --)
+    [ $# -gt 0 ] && error "unexpected argument '$1'"
+    ;;
   *)
     error "unexpected argument '$ARG'"
     ;;
   esac
 done
 
-[ -z "$LINODE_API_TOKEN" ] && error "missing TOKEN"
-[ -z "$LINODE_DOMAIN" ] && error "missing DOMAIN"
+[ -z "$LINODE_API_TOKEN" ] && error "missing --api-token=TOKEN"
+[ -z "$LINODE_DOMAIN" ] && error "missing --domain=DOMAIN"
 
-which "$JQ_EXEC" >/dev/null || error "jq not installed"
-which "$LINODE_API_EXEC" >/dev/null || error "linode-api not installed"
+which "$JQ_EXEC" >/dev/null || error "jq not found"
+which "$LINODE_API_EXEC" >/dev/null || error "linode-api not found"
 
 if [ -n "$LINODE_RECORD_NAME" ]; then
   LINODE_RECORD_FQDN="$LINODE_RECORD_NAME.$LINODE_DOMAIN"

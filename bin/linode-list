@@ -13,15 +13,15 @@ Usage: $PROGRAM [OPTIONS]
 
 Query linode instance.
 
-Optional arguments:
-  -k, --token=TOKEN    Linode API token
-  -h, --help           This help text
+Options:
+  -k, --api-token=TOKEN    API token (required)
+  -h, --help               This help text
 
-Enviroment variable mappings:
-  LINODE_API_TOKEN     --token
-  CURL_EXEC            Path to curl
-  JQ_EXEC              Path to jq
-  LINODE_API_EXEC      Path to linode-api
+Enviroment variables:
+  LINODE_API_TOKEN         See --api-token
+  CURL_EXEC                Path to curl
+  JQ_EXEC                  Path to jq
+  LINODE_API_EXEC          Path to linode-api
 
 LIMITATION: this will only show up to 100 Linodes.
 EOF
@@ -43,7 +43,7 @@ linode_api() {
 
 opts="$(
   getopt -n "$PROGRAM" -o k:h \
-    -l token:,help -- "$@"
+    -l api-token:,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -52,7 +52,7 @@ while [ $# -gt 0 ]; do
   ARG="$1"
   shift
   case "$ARG" in
-  -k | --token)
+  -k | --api-token)
     LINODE_API_TOKEN="$1"
     shift
     ;;
@@ -67,7 +67,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -z "${LINODE_API_TOKEN:-}" ] && error "missing TOKEN"
+[ -z "$LINODE_API_TOKEN" ] && error "missing --api-token=TOKEN"
 
 which "$JQ_EXEC" >/dev/null || error "jq not found"
 which "$LINODE_API_EXEC" >/dev/null || error "linode-api not found"

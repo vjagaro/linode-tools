@@ -23,22 +23,22 @@ invalid arguments.
 
 See https://www.linode.com/docs/api for more information.
 
-Required arguments:
-  PATH                   Appended to prefix to form URL
+Arguments:
+  PATH                     Appended to prefix to form URL
 
-Optional arguments:
-  -k, --token=TOKEN      API token
-  -b, --body=BODY        JSON Body (default none)
-  -f, --filter=FILTER    JSON Filter (default none)
-  -m, --method=METHOD    HTTP method (default $LINODE_API_METHOD)
-  -p, --prefix=PREFIX    URL prefix (default $LINODE_API_PREFIX)
-  -h, --help             This help text
+Options:
+  -k, --api-token=TOKEN    API token (required)
+  -b, --body=BODY          JSON Body (default none)
+  -f, --filter=FILTER      JSON Filter (default none)
+  -m, --method=METHOD      HTTP method (default $LINODE_API_METHOD)
+  -p, --prefix=PREFIX      URL prefix (default $LINODE_API_PREFIX)
+  -h, --help               This help text
 
-Enviroment variable mappings:
-  LINODE_API_TOKEN       --token
-  LINODE_API_PREFIX      --prefix
-  CURL_EXEC              Path to curl
-  JQ_EXEC                Path to jq
+Enviroment variables:
+  LINODE_API_TOKEN         See --token
+  LINODE_API_PREFIX        See --prefix
+  CURL_EXEC                Path to curl
+  JQ_EXEC                  Path to jq
 
 Examples:
   \$ export LINODE_API_TOKEN=...
@@ -75,7 +75,7 @@ make_error() {
 
 opts="$(
   getopt -n "$PROGRAM" -o k:b:f:m:p:h \
-    -l token:,body:,filter:,method:,prefix:,help -- "$@"
+    -l api-token:,body:,filter:,method:,prefix:,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -84,7 +84,7 @@ while [ $# -gt 0 ]; do
   ARG="$1"
   shift
   case "$ARG" in
-  -k | --token)
+  -k | --api-token)
     LINODE_API_TOKEN="$1"
     shift
     ;;
@@ -109,15 +109,12 @@ while [ $# -gt 0 ]; do
     exit 0
     ;;
   --)
-    while [ $# -gt 0 ]; do
-      ARG="$1"
-      if [ -z "$LINODE_API_PATH" ]; then
-        LINODE_API_PATH="$ARG"
-      else
-        error "unexpected argument '$ARG'"
-      fi
+    if [ $# -eq 1 ]; then
+      LINODE_API_PATH="$1"
       shift
-    done
+    elif [ $# -gt 1 ]; then
+      error "unexpected argument '$2'"
+    fi
     ;;
   *)
     error "unexpected option '$ARG'"
@@ -126,7 +123,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -z "$LINODE_API_PATH" ] && error "missing PATH"
-[ -z "$LINODE_API_TOKEN" ] && error "missing TOKEN"
+[ -z "$LINODE_API_TOKEN" ] && error "missing --api-token=TOKEN"
 
 which "$CURL_EXEC" >/dev/null || error "curl not found"
 which "$JQ_EXEC" >/dev/null || error "jq not found"

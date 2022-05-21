@@ -17,21 +17,21 @@ Usage: $PROGRAM [OPTIONS] LABEL
 
 Delete linode instance.
 
-Required arguments:
-  LABEL                Instance label
+Arguments:
+  LABEL                    Instance label
 
-Optional arguments:
-  -k, --token=TOKEN    API token
-  -o, --output=PATH    Path to output result as shell variables
-  -q, --quiet          Suppress output
-  -h, --help           This help text
+Options:
+  -k, --api-token=TOKEN    API token (required)
+  -o, --output=PATH        Path to output result as shell variables
+  -q, --quiet              Suppress output
+  -h, --help               This help text
 
-Enviroment variable mappings:
-  LINODE_API_TOKEN     --token
-  CURL_EXEC            Path to curl
-  JQ_EXEC              Path to jq
-  LINODE_API_EXEC      Path to linode-api
-  LINODE_QUERY_EXEC    Path to linode-query
+Enviroment variables:
+  LINODE_API_TOKEN         See --token
+  CURL_EXEC                Path to curl
+  JQ_EXEC                  Path to jq
+  LINODE_API_EXEC          Path to linode-api
+  LINODE_QUERY_EXEC        Path to linode-query
 EOF
 }
 
@@ -59,7 +59,7 @@ out() {
 
 opts="$(
   getopt -n "$PROGRAM" -o k:o:qh \
-    -l token:,output:,quiet,help -- "$@"
+    -l api-token:,output:,quiet,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -68,7 +68,7 @@ while [ $# -gt 0 ]; do
   ARG="$1"
   shift
   case "$ARG" in
-  -k | --token)
+  -k | --api-token)
     LINODE_API_TOKEN="$1"
     shift
     ;;
@@ -84,15 +84,12 @@ while [ $# -gt 0 ]; do
     exit 0
     ;;
   --)
-    while [ $# -gt 0 ]; do
-      ARG="$1"
-      if [ -z "$LINODE_LABEL" ]; then
-        LINODE_LABEL="$ARG"
-      else
-        error "unexpected argument '$ARG'"
-      fi
+    if [ $# -eq 1 ]; then
+      LINODE_LABEL="$1"
       shift
-    done
+    elif [ $# -gt 1 ]; then
+      error "unexpected argument '$2'"
+    fi
     ;;
   *)
     error "unexpected option '$ARG'"
@@ -100,11 +97,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -z "${LINODE_LABEL:-}" ] && error "missing LABEL"
-[ -z "${LINODE_API_TOKEN:-}" ] && error "missing TOKEN"
+[ -z "$LINODE_LABEL" ] && error "missing LABEL"
+[ -z "$LINODE_API_TOKEN" ] && error "missing --api-token=TOKEN"
 
-which "$JQ_EXEC" >/dev/null || error "jq not installed"
-which "$LINODE_API_EXEC" >/dev/null || error "linode-api not installed"
+which "$JQ_EXEC" >/dev/null || error "jq not found"
+which "$LINODE_API_EXEC" >/dev/null || error "linode-api not found"
 
 if [ "$OUTPUT_PATH" = - ]; then
   OUTPUT_PATH=/dev/stdout
