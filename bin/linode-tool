@@ -1,0 +1,392 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=linode-tool
+COMMAND=
+LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
+LINODE_LABEL="${LINODE_LABEL:-}"
+LINODE_SCRIPT="${LINODE_SCRIPT:-}"
+LINODE_IMAGE="${LINODE_IMAGE:-linode/debian11}"
+LINODE_REGION="${LINODE_REGION:-us-west}"
+LINODE_TYPE="${LINODE_TYPE:-g6-nanode-1}"
+LINODE_CONNECT_METHOD="${LINODE_CONNECT_METHOD:-ipv4}"
+LINODE_DOMAIN="${LINODE_DOMAIN:-}"
+LINODE_DOMAIN_API_TOKEN="${LINODE_DOMAIN_API_TOKEN:-}"
+LINODE_DOMAIN_RECORD="${LINODE_DOMAIN_RECORD:-}"
+LINODE_DOMAIN_TTL="${LINODE_DOMAIN_TTL:-}"
+OUTPUT_PATH=
+QUIET=
+JQ_EXEC="${JQ_EXEC:-jq}"
+LINODE_CREATE_EXEC="${LINODE_CREATE_EXEC:-linode-create}"
+LINODE_DELETE_EXEC="${LINODE_DELETE_EXEC:-linode-delete}"
+LINODE_DNS_EXEC="${LINODE_DNS_EXEC:-linode-dns}"
+LINODE_QUERY_EXEC="${LINODE_QUERY_EXEC:-linode-query}"
+SSH_KNOWN_HOSTS="${SSH_KNOWN_HOSTS:-"$HOME/.ssh/known_hosts"}"
+
+usage() {
+  cat <<EOF
+Usage: $PROGRAM [OPTIONS] COMMAND
+
+Simple Linode instance tool.
+
+Commands:
+  create                          Create a new instance
+  update                          Update an instance
+  ssh                             SSH into an instance
+  delete                          Delete an instance
+
+Options:
+  -k, --api-token=TOKEN           API token (required)
+  -l, --label=LABEL               Instance label (required)
+  -s, --script=FILE               Instance create / update script
+  -i, --image=IMAGE               Linode image (default: $LINODE_IMAGE)
+  -r, --region=REGION             Linode region (default: $LINODE_REGION)
+  -t, --type=TYPE                 Linode type (default: $LINODE_TYPE)
+  -m, --connect-method=METHOD     One of ipv4, ipv6 (default: $LINODE_CONNECT_METHOD)
+  -d, --domain=NAME               Domain name
+  -K, --domain-api-token=TOKEN    Domain API token
+  -R, --domain-record=NAME        Domain record name
+  -T, --domain-ttl=TTL            Domain time-to-live (TTL) in seconds
+  -c, --config=FILE               Configuration file
+  -o, --output=FILE               Write output as shell variables to FILE
+  -q, --quiet                     Suppress output
+  -h, --help                      This help text
+
+Enviroment / configuration variables:
+  LINODE_API_TOKEN                See --api-token
+  LINODE_LABEL                    See --label
+  LINODE_SCRIPT                   See --script
+  LINODE_IMAGE                    See --image
+  LINODE_REGION                   See --region
+  LINODE_TYPE                     See --type
+  LINODE_CONNECT_METHOD           See --connect-method
+  LINODE_DOMAIN                   See --domain
+  LINODE_DOMAIN_API_TOKEN         See --domain-api-token
+  LINODE_DOMAIN_RECORD            See --domain-record
+  LINODE_DOMAIN_TTL               See --domain-ttl
+  CURL_EXEC                       Path to curl
+  JQ_EXEC                         Path to jq
+  LINODE_API_EXEC                 Path to linode-api
+  LINODE_CREATE_EXEC              Path to linode-create
+  LINODE_DELETE_EXEC              Path to linode-delete
+  LINODE_DNS_EXEC                 Path to linode-dns
+  LINODE_QUERY_EXEC               Path to linode-query
+  SSH_KNOWN_HOSTS                 Path to .ssh/known_hosts
+EOF
+}
+
+error() {
+  [ $# -gt 0 ] && echo >&2 "$PROGRAM:" "$@"
+  echo >&2 "Try '$PROGRAM --help' for more information."
+  exit 1
+}
+
+jq() {
+  command "$JQ_EXEC" "$@"
+}
+
+linode_create() {
+  LINODE_API_TOKEN="$LINODE_API_TOKEN" \
+    command "$LINODE_CREATE_EXEC" "$@"
+}
+
+linode_delete() {
+  LINODE_API_TOKEN="$LINODE_API_TOKEN" \
+    command "$LINODE_DELETE_EXEC" "$@"
+}
+
+linode_dns() {
+  LINODE_API_TOKEN="${LINODE_DOMAIN_API_TOKEN:-"$LINODE_API_TOKEN"}" \
+    command "$LINODE_DNS_EXEC" "$@"
+}
+
+linode_query() {
+  LINODE_API_TOKEN="$LINODE_API_TOKEN" \
+    command "$LINODE_QUERY_EXEC" "$@"
+}
+
+out() {
+  [ -n "$QUIET" ] || echo "$@"
+}
+
+opts="$(
+  getopt -n "$PROGRAM" -o k:l:s:i:r:t:m:d:K:R:T:c:o:qh \
+    -l api-token:,label:,script:,image:,region:,type:,connect-method: \
+    -l domain:,domain-api-token:,domain-record:,domain-ttl: \
+    -l config:,output:,quiet,help -- "$@"
+)" || error
+# shellcheck disable=SC2086
+eval set -- $opts
+
+while [ $# -gt 0 ]; do
+  ARG="$1"
+  shift
+  case "$ARG" in
+  -k | --api-token)
+    LINODE_API_TOKEN="$1"
+    shift
+    ;;
+  -l | --label)
+    LINODE_LABEL="$1"
+    shift
+    ;;
+  -s | --script)
+    LINODE_SCRIPT="$1"
+    shift
+    ;;
+  -i | --image)
+    LINODE_IMAGE="$1"
+    shift
+    ;;
+  -r | --region)
+    LINODE_REGION="$1"
+    shift
+    ;;
+  -t | --type)
+    LINODE_TYPE="$1"
+    shift
+    ;;
+  -m | --connect-method)
+    LINODE_CONNECT_METHOD="$1"
+    shift
+    ;;
+  -d | --domain)
+    LINODE_DOMAIN="$1"
+    shift
+    ;;
+  -K | --domain-api-token)
+    LINODE_DOMAIN_API_TOKEN="$1"
+    shift
+    ;;
+  -R | --domain-record)
+    LINODE_DOMAIN_RECORD="$1"
+    shift
+    ;;
+  -T | --domain-ttl)
+    LINODE_DOMAIN_TTL="$1"
+    shift
+    ;;
+  -c | --config)
+    # shellcheck disable=SC1090
+    . "$(realpath "$1")"
+    shift
+    ;;
+  -o | --output)
+    OUTPUT_PATH="$1"
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    if [ $# -eq 1 ]; then
+      COMMAND="$1"
+      shift
+    elif [ $# -gt 1 ]; then
+      error "unexpected argument '$2'"
+    fi
+    ;;
+  *)
+    error "unexpected option '$ARG'"
+    ;;
+  esac
+done
+
+[ -z "$LINODE_API_TOKEN" ] && error "missing --api-token=TOKEN"
+[ -z "$LINODE_LABEL" ] && error "missing LABEL"
+[ "$LINODE_CONNECT_METHOD" != ipv4 ] && [ "$LINODE_CONNECT_METHOD" != ipv6 ] &&
+  error "unknown --connect-method='$1'"
+
+case "$COMMAND" in
+create | update | ssh | delete) ;;
+"")
+  error "missing COMMAND"
+  ;;
+*)
+  error "unknown COMMAND '$COMMAND'"
+  ;;
+esac
+
+which "$JQ_EXEC" >/dev/null || error "jq not found"
+which "$LINODE_CREATE_EXEC" >/dev/null || error "linode-create not found"
+which "$LINODE_DELETE_EXEC" >/dev/null || error "linode-delete not found"
+
+if [ "$OUTPUT_PATH" = - ]; then
+  OUTPUT_PATH=/dev/stdout
+  QUIET=1
+fi
+
+if [ -n "$QUIET" ]; then
+  QUIET_ARG=--quiet
+else
+  QUIET_ARG=
+fi
+
+if [ -n "$LINODE_DOMAIN" ]; then
+  if [ -n "$LINODE_DOMAIN_RECORD" ]; then
+    LINODE_FQDN="$LINODE_DOMAIN_RECORD.$LINODE_DOMAIN"
+  else
+    LINODE_FQDN="$LINODE_DOMAIN"
+  fi
+else
+  LINODE_FQDN=
+fi
+
+LINODE_DELETE=
+
+tmp="$(mktemp)"
+
+trap 'rm -f -- "$tmp"' EXIT
+
+# shellcheck disable=SC2086
+linode_query \
+  --output "$tmp" \
+  $QUIET_ARG \
+  "$LINODE_LABEL" || true
+
+eval "$(grep -E '^LINODE_(API_OK|API_ERROR|ID|IPV4|IPV6)=' "$tmp")"
+
+if [ -z "$LINODE_API_OK" ] && [ "$LINODE_API_ERROR" = "Not found" ] &&
+  [ "$COMMAND" = create ]; then
+
+  # shellcheck disable=SC2086
+  linode_create \
+    --image="$LINODE_IMAGE" \
+    --region="$LINODE_REGION" \
+    --type="$LINODE_TYPE" \
+    --no-check \
+    --output="$tmp" \
+    $QUIET_ARG \
+    "$LINODE_LABEL" || true
+
+  eval "$(grep -E '^LINODE_(API_OK|API_ERROR|ID|IPV4|IPV6)=' "$tmp")"
+
+else
+
+  echo "LINODE_CREATE=''" >>"$tmp"
+
+fi
+
+if [ "$LINODE_CONNECT_METHOD" = ipv6 ]; then
+  # shellcheck disable=SC2153
+  LINODE_IP="$LINODE_IPV6"
+else
+  # shellcheck disable=SC2153
+  LINODE_IP="$LINODE_IPV4"
+fi
+
+if [ "$COMMAND" = delete ]; then
+
+  for host in "$LINODE_IPV4" "$LINODE_IPV6" "$LINODE_FQDN"; do
+    [ -n "$host" ] && ssh-keygen -R "$host" -f "$SSH_KNOWN_HOSTS" >/dev/null 2>&1
+  done
+
+  if [ -n "$LINODE_DOMAIN" ]; then
+    out
+    # shellcheck disable=SC2086
+    linode_dns \
+      --domain "$LINODE_DOMAIN" \
+      --name "$LINODE_DOMAIN_RECORD" \
+      --ipv4 . \
+      --ipv6 . \
+      --ttl "$LINODE_DOMAIN_TTL" \
+      $QUIET_ARG
+  fi
+
+  # shellcheck disable=SC2153
+  if [ -n "$LINODE_API_OK" ] && [ -n "$LINODE_ID" ]; then
+
+    output1="$(head -2 "$tmp")"
+    output2="$(tail +3 "$tmp")"
+    out
+
+    linode_delete \
+      --no-check \
+      --id="$LINODE_ID" \
+      --output="$tmp" \
+      $QUIET_ARG \
+      "$LINODE_LABEL" || true
+
+    eval "$(grep -E '^LINODE_API_OK=' "$tmp")"
+
+    if [ -n "$LINODE_API_OK" ]; then
+      echo "$output1" >"$tmp"
+      echo "$output2" >>"$tmp"
+      LINODE_DELETE=1
+    else
+      output1="$(head -2 "$tmp")"
+      echo "$output1" >"$tmp"
+      echo "$output2" >>"$tmp"
+    fi
+  fi
+fi
+
+if [ -n "$OUTPUT_PATH" ]; then
+  cat "$tmp" >"$OUTPUT_PATH"
+  echo "LINODE_DELETE='$LINODE_DELETE'" >>"$OUTPUT_PATH"
+fi
+
+if [ "$COMMAND" = delete ]; then
+  if [ -n "$LINODE_API_OK" ]; then
+    exit 0
+  else
+    exit 1
+  fi
+fi
+
+if [ -z "$LINODE_API_OK" ]; then
+  exit 1
+fi
+
+if [ "$COMMAND" = create ]; then
+  out
+  linode_dns \
+    --ttl "$LINODE_DOMAIN_TTL" \
+    --domain "$LINODE_DOMAIN" \
+    --name "$LINODE_DOMAIN_RECORD" \
+    --ipv4 "$LINODE_IPV4" \
+    --ipv6 "$LINODE_IPV6"
+fi
+
+out
+out -n "Waiting for $LINODE_LABEL at $LINODE_IP..."
+until nc -w 5 -z "$LINODE_IP" 22; do
+  out -n .
+  sleep 1
+done
+
+out ok
+out
+
+if [ "$COMMAND" = ssh ]; then
+
+  out "SSHing to $LINODE_LABEL..."
+
+  ssh -o StrictHostKeyChecking=accept-new "root@$LINODE_IP"
+
+elif [ "$COMMAND" = create ] || [ "$COMMAND" = update ]; then
+
+  if [ -n "$LINODE_SCRIPT" ]; then
+
+    out "Running $COMMAND script on $LINODE_LABEL..."
+    out
+
+    [ "$LINODE_SCRIPT" = - ] && LINODE_SCRIPT=/dev/stdin
+
+    ssh -o StrictHostKeyChecking=accept-new "root@$LINODE_IP" \
+      't="$(mktemp)"; cat >"$t"; chmod 755 "$t"; "$t"; rm -f "$t"' \
+      <"$LINODE_SCRIPT"
+
+  else
+
+    out "No script specified. Not doing anything..."
+
+  fi
+fi
+
+exit 0

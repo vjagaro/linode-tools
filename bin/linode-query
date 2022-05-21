@@ -17,11 +17,11 @@ Usage: $PROGRAM [OPTIONS] LABEL
 Query linode instance.
 
 Arguments:
-  LABEL                    Instance label
+  LABEL                    Instance label (required)
 
 Options:
   -k, --api-token=TOKEN    API token (required)
-  -o, --output=PATH        Path to output result as shell variables
+  -o, --output=FILE        Write output as shell variables to FILE
   -q, --quiet              Suppress output
   -h, --help               This help text
 
@@ -111,8 +111,8 @@ linode_filter="$(jq -cn --arg label_ "$LINODE_LABEL" '{ "label": $label_ }')"
 json="$(linode_api -f "$linode_filter" /linode/instances)"
 
 # shellcheck disable=SC2016
-query_filter='@sh "LINODE_API_STATUS=\(
-  if .errors[0].reason then "error" else "ok" end)
+query_filter='@sh "LINODE_API_OK=\(
+  if .errors[0].reason then "" else "1" end)
 LINODE_API_ERROR=\(.errors[0].reason // "")
 LINODE_LABEL=\(.data[0].label // $label_)
 LINODE_ID=\(.data[0].id // "")
@@ -127,14 +127,14 @@ output="$(echo "$json" | jq -r --arg label_ "$LINODE_LABEL" "$query_filter")"
 
 eval "$output"
 
-if [ "$LINODE_API_STATUS" = error ]; then
+if [ -z "$LINODE_API_OK" ]; then
   out error
   out "Error: $LINODE_API_ERROR"
   exitcode=1
 elif [ -z "$LINODE_ID" ]; then
   out not found
   output="$(echo "$output" |
-    sed "s/^LINODE_API_STATUS.*\$/LINODE_API_STATUS='error'/" |
+    sed "s/^LINODE_API_OK.*\$/LINODE_API_OK=''/" |
     sed "s/^LINODE_API_ERROR.*\$/LINODE_API_ERROR='Not found'/")"
   exitcode=1
 else
@@ -143,8 +143,8 @@ else
   out " Label: $LINODE_LABEL"
   out "    ID: $LINODE_ID"
   out "Status: $LINODE_STATUS"
-  out "  IPV4: $LINODE_IPV4"
-  out "  IPV6: $LINODE_IPV6"
+  out "  IPv4: $LINODE_IPV4"
+  out "  IPv6: $LINODE_IPV6"
   out "Region: $LINODE_REGION"
   out " Image: $LINODE_IMAGE"
   out "  Type: $LINODE_TYPE"

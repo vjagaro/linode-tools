@@ -24,12 +24,12 @@ invalid arguments.
 See https://www.linode.com/docs/api for more information.
 
 Arguments:
-  PATH                     Appended to prefix to form URL
+  PATH                     Path appended to URL prefix (required)
 
 Options:
   -k, --api-token=TOKEN    API token (required)
-  -b, --body=BODY          JSON Body (default none)
-  -f, --filter=FILTER      JSON Filter (default none)
+  -b, --body=BODY          JSON body (default none)
+  -f, --filter=FILTER      JSON filter (default none)
   -m, --method=METHOD      HTTP method (default $LINODE_API_METHOD)
   -p, --prefix=PREFIX      URL prefix (default $LINODE_API_PREFIX)
   -h, --help               This help text

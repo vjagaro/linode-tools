@@ -5,6 +5,8 @@ set -eu
 PROGRAM=linode-delete
 LINODE_LABEL=
 LINODE_API_TOKEN="${LINODE_API_TOKEN:-}"
+NO_CHECK=
+LINODE_ID=
 OUTPUT_PATH=
 QUIET=
 JQ_EXEC="${JQ_EXEC:-jq}"
@@ -18,11 +20,13 @@ Usage: $PROGRAM [OPTIONS] LABEL
 Delete linode instance.
 
 Arguments:
-  LABEL                    Instance label
+  LABEL                    Instance label (required)
 
 Options:
   -k, --api-token=TOKEN    API token (required)
-  -o, --output=PATH        Path to output result as shell variables
+  -n, --no-check           Don't check for existing instance
+  -i, --id=ID              Instance ID (required if --no-check)
+  -o, --output=FILE        Write output as shell variables to FILE
   -q, --quiet              Suppress output
   -h, --help               This help text
 
@@ -58,8 +62,8 @@ out() {
 }
 
 opts="$(
-  getopt -n "$PROGRAM" -o k:o:qh \
-    -l api-token:,output:,quiet,help -- "$@"
+  getopt -n "$PROGRAM" -o k:ni:o:qh \
+    -l api-token:,no-check,id:,output:,quiet,help -- "$@"
 )" || error
 # shellcheck disable=SC2086
 eval set -- $opts
@@ -70,6 +74,13 @@ while [ $# -gt 0 ]; do
   case "$ARG" in
   -k | --api-token)
     LINODE_API_TOKEN="$1"
+    shift
+    ;;
+  -n | --no-check)
+    NO_CHECK=1
+    ;;
+  -i | --id)
+    LINODE_ID="$1"
     shift
     ;;
   -o | --output)
@@ -114,30 +125,33 @@ tmp="$(mktemp)"
 
 trap 'rm -f -- "$tmp"' EXIT
 
-out -n "Querying instance $LINODE_LABEL..."
+if [ -n "$NO_CHECK" ]; then
 
-set +e
-# shellcheck disable=SC2086
-linode_query -qo "$tmp" "$LINODE_LABEL"
-exitcode=$?
-set -e
+  [ -n "$LINODE_ID" ] || error "missing --id=ID"
 
-# shellcheck disable=SC1090
-. "$tmp"
-
-if [ $exitcode = 0 ]; then
-  out ok
 else
-  if [ "$LINODE_API_ERROR" = "Not found" ]; then
-    out not found
+
+  out -n "Querying instance $LINODE_LABEL..."
+
+  linode_query -qo "$tmp" "$LINODE_LABEL" || true
+
+  eval "$(grep -E '^LINODE_(API_OK|API_ERROR|ID)=' "$tmp")"
+
+  if [ -n "$LINODE_API_OK" ]; then
+    out ok
   else
-    out error
+    if [ "$LINODE_API_ERROR" = "Not found" ]; then
+      out not found
+    else
+      out error
+    fi
+    if [ -n "$OUTPUT_PATH" ]; then
+      head -4 "$tmp" >"$OUTPUT_PATH"
+      echo "LINODE_DELETE='no'" >>"$OUTPUT_PATH"
+    fi
+    exit 1
   fi
-  if [ -n "$OUTPUT_PATH" ]; then
-    head -4 "$tmp" >"$OUTPUT_PATH"
-    echo "LINODE_DELETE='no'" >>"$OUTPUT_PATH"
-  fi
-  exit $exitcode
+
 fi
 
 out -n "Deleting instance $LINODE_LABEL..."
@@ -145,27 +159,25 @@ out -n "Deleting instance $LINODE_LABEL..."
 linode_api -m DELETE "/linode/instances/$LINODE_ID" >"$tmp"
 
 # shellcheck disable=SC2016
-delete_filter='@sh "LINODE_API_STATUS=\(
-  if .errors[0].reason then "error" else "ok" end)
+delete_filter='@sh "LINODE_API_OK=\(
+  if .errors[0].reason then "" else "1" end)
 LINODE_API_ERROR=\(.errors[0].reason // "")
 LINODE_LABEL=\($label_)
 LINODE_ID=\($id)
-LINODE_DELETE=\(if .errors[0].reason then "no" else "yes" end)"'
+LINODE_DELETE=\(if .errors[0].reason then "" else "1" end)"'
 
 output="$(jq --arg label_ "$LINODE_LABEL" --arg id "$LINODE_ID" \
   -r "$delete_filter" "$tmp")"
 
-eval "$output"
-
-if [ "$LINODE_API_STATUS" = error ]; then
-  out error
-  out "Error: $LINODE_API_ERROR"
-  exitcode=1
-else
-  out ok
-  exitcode=0
-fi
-
 [ -n "$OUTPUT_PATH" ] && echo "$output" >"$OUTPUT_PATH"
 
-exit $exitcode
+eval "$(echo "$output" | grep -E '^LINODE_(API_OK|API_ERROR)=')"
+
+if [ -n "$LINODE_API_OK" ]; then
+  out ok
+  exit 0
+else
+  out error
+  out "Error: $LINODE_API_ERROR"
+  exit 1
+fi
