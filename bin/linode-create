@@ -19,7 +19,7 @@ usage() {
   cat <<EOF
 Usage: $PROGRAM [OPTIONS] LABEL
 
-Create linode instance.
+Create Linode instance.
 
 Arguments:
   LABEL                    Instance label (required)

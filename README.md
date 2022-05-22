@@ -1,53 +1,65 @@
 # linode-tools
 
-An opinionated set of shell scripts to help manage Linode instances.
+Simplified Linode instance tools.
 
 ## Usage
 
+Configure:
+
+```sh
+cat >config <<EOF
+LINODE_API_TOKEN=aa02....d9c2
+LINODE_LABEL=label
+LINODE_IMAGE=linode/debian11
+LINODE_TYPE=g6-nanode-1
+LINODE_CONNECT_METHOD=ipv4
+LINODE_DOMAIN=domain.com
+LINODE_DOMAIN_RECORD=name
+EOF
+
+export LINODE_TOOL_CONFIG=config
 ```
-$ export LINODE_API_TOKEN=3f...b1
 
-$ linode-create purple
-Querying linode purple...not found
-Querying SSH keys...ok
-Creating linode purple...ok
+Check the status:
 
- Label: purple
-    ID: 36406452
-Status: provisioning
-  IPV4: 74.207.246.120
-  IPV6: 2600:3c01::f03c:93ff:fe1f:a1c9
-Region: us-west
- Image: linode/debian11
-  Type: g6-nanode-1
-Create: yes
+```sh
+linode-tool status
+```
 
-$ linode-list
-Label  | ID       | IPv4            | IPv6                           | Region  | Status
-purple | 36406452 | 74.207.246.120  | 2600:3c01::f03c:93ff:fe1f:a1c9 | us-west | provisioning
+Create the instance and associated domain records:
 
-$ eval "$(linode-query -o- purple)"
+```sh
+linode-tool create
+```
 
-$ echo $LINODE_ID
-36406452
+Run `script.sh` on the instance:
 
-$ linode-dns -d colors.com -n purple -4 $LINODE_IPV4 -6 $LINODE_IPV6
-Querying domain colors.com...ok
-Querying domain records...ok
+```sh
+linode-tool -s script.sh update
+```
 
-purple.colors.com: 74.207.246.120 (A) creating...ok
-purple.colors.com: 2600:3c01::f03c:93ff:fe1f:a1c9 (AAAA) creating...ok
+SSH into the instance:
 
-$ linode-delete purple
-Querying linode purple...ok
-Deleting linode purple...ok
+```sh
+linode-tool ssh
+```
 
-$ linode-dns -d colors.com -n purple -4 . -6 .
-Querying domain colors.com...ok
-Querying domain records...ok
+Delete the instance and associated domain records:
 
-purple.colors.com: 74.207.246.120 (A) deleting...ok
-purple.colors.com: 2600:3c01::f03c:93ff:fe1f:a1c9 (AAAA) deleting...ok
+```sh
+linode-tool delete
+```
+
+Get help and usage information:
+
+```sh
+linode-api --help
+linode-create --help
+linode-delete --help
+linode-dns --help
+linode-list --help
+linode-query --help
+linode-tool --help
 ```
 
 ## Install

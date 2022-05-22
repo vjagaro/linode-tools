@@ -28,9 +28,10 @@ usage() {
   cat <<EOF
 Usage: $PROGRAM [OPTIONS] COMMAND
 
-Simple Linode instance tool.
+Manage Linode instance.
 
 Commands:
+  status                          Show status of the instance
   create                          Create a new instance
   update                          Update an instance
   ssh                             SSH into an instance
@@ -65,6 +66,7 @@ Enviroment / configuration variables:
   LINODE_DOMAIN_API_TOKEN         See --domain-api-token
   LINODE_DOMAIN_RECORD            See --domain-record
   LINODE_DOMAIN_TTL               See --domain-ttl
+  LINODE_TOOL_CONFIG              See --config
   CURL_EXEC                       Path to curl
   JQ_EXEC                         Path to jq
   LINODE_API_EXEC                 Path to linode-api
@@ -109,6 +111,11 @@ linode_query() {
 out() {
   [ -n "$QUIET" ] || echo "$@"
 }
+
+if [ -n "${LINODE_TOOL_CONFIG:-}" ]; then
+  # shellcheck disable=SC1090
+  . "$(realpath "$LINODE_TOOL_CONFIG")"
+fi
 
 opts="$(
   getopt -n "$PROGRAM" -o k:l:s:i:r:t:m:d:K:R:T:c:o:qh \
@@ -203,7 +210,7 @@ done
   error "unknown --connect-method='$1'"
 
 case "$COMMAND" in
-create | update | ssh | delete) ;;
+status | create | update | ssh | delete) ;;
 "")
   error "missing COMMAND"
   ;;
@@ -305,6 +312,7 @@ if [ "$COMMAND" = delete ]; then
     output2="$(tail +3 "$tmp")"
     out
 
+    # shellcheck disable=SC2086
     linode_delete \
       --no-check \
       --id="$LINODE_ID" \
@@ -331,7 +339,7 @@ if [ -n "$OUTPUT_PATH" ]; then
   echo "LINODE_DELETE='$LINODE_DELETE'" >>"$OUTPUT_PATH"
 fi
 
-if [ "$COMMAND" = delete ]; then
+if [ "$COMMAND" = status ] || [ "$COMMAND" = delete ]; then
   if [ -n "$LINODE_API_OK" ]; then
     exit 0
   else
@@ -366,7 +374,6 @@ out
 if [ "$COMMAND" = ssh ]; then
 
   out "SSHing to $LINODE_LABEL..."
-
   ssh -o StrictHostKeyChecking=accept-new "root@$LINODE_IP"
 
 elif [ "$COMMAND" = create ] || [ "$COMMAND" = update ]; then
@@ -381,10 +388,6 @@ elif [ "$COMMAND" = create ] || [ "$COMMAND" = update ]; then
     ssh -o StrictHostKeyChecking=accept-new "root@$LINODE_IP" \
       't="$(mktemp)"; cat >"$t"; chmod 755 "$t"; "$t"; rm -f "$t"' \
       <"$LINODE_SCRIPT"
-
-  else
-
-    out "No script specified. Not doing anything..."
 
   fi
 fi

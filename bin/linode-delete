@@ -17,7 +17,7 @@ usage() {
   cat <<EOF
 Usage: $PROGRAM [OPTIONS] LABEL
 
-Delete linode instance.
+Delete Linode instance.
 
 Arguments:
   LABEL                    Instance label (required)

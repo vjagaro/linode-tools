@@ -14,7 +14,7 @@ usage() {
   cat <<EOF
 Usage: $PROGRAM [OPTIONS] LABEL
 
-Query linode instance.
+Query Linode instance.
 
 Arguments:
   LABEL                    Instance label (required)
